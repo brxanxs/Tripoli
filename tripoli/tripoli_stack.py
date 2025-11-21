@@ -2,6 +2,8 @@ from aws_cdk import (
     # Duration,
     Stack,
     # aws_sqs as sqs,
+    aws_s3 as s3,
+    aws_lambda as lambda_,
 )
 from constructs import Construct
 
@@ -18,3 +20,5 @@ class TripoliStack(Stack):
         #     self, "TripoliQueue",
         #     visibility_timeout=Duration.seconds(300),
         # )
+
+        temp_bucket = s3.Bucket(self, "TempBucket")
