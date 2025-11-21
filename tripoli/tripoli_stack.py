@@ -11,6 +11,7 @@ class TripoliStack(Stack):
         super().__init__(scope, construct_id, **kwargs)
 
         # The code that defines your stack goes here
+        # This is a test
 
         # example resource
         # queue = sqs.Queue(
