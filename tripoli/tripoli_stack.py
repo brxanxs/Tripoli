@@ -21,4 +21,9 @@ class TripoliStack(Stack):
         #     visibility_timeout=Duration.seconds(300),
         # )
 
+        # temporary log storage
+        # replace this bucket and add trigger for lambda
         temp_bucket = s3.Bucket(self, "TempBucket")
+
+        # bucket for reports
+        report_bucket = s3.Bucket(self, "TempBucket")
