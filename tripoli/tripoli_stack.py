@@ -26,4 +26,6 @@ class TripoliStack(Stack):
         temp_bucket = s3.Bucket(self, "TempBucket")
 
         # bucket for reports
-        report_bucket = s3.Bucket(self, "TempBucket")
+        report_bucket = s3.Bucket(self, "ReportBucket")
+
+        
