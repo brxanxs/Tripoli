@@ -4,6 +4,7 @@ from aws_cdk import (
     # aws_sqs as sqs,
     aws_s3 as s3,
     aws_lambda as lambda_,
+    aws_sns as sns,
 )
 from constructs import Construct
 
@@ -28,4 +29,9 @@ class TripoliStack(Stack):
         # bucket for reports
         report_bucket = s3.Bucket(self, "ReportBucket")
 
-        
+        # sns for sending reports
+        report_message = sns.Topic(self, "ReportSNS")
+
+
+
+

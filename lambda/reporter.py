@@ -2,12 +2,13 @@ import boto3
 from datetime import datetime, timezone, timedelta
 import io
 import csv
-import json
+import os
 
 IN_BUCKET = 'TempBucket'
 OUT_BUCKET = 'ReportBucket'
 
 s3 = boto3.client('s3')
+sns = boto3.client('sns')
 
 def lambda_handler(event, context):
     
@@ -52,6 +53,13 @@ def lambda_handler(event, context):
 
     subject = 'File Report'
     body = f'{url}'
+    sns_arn = os.environ.get('ReportSNS')
 
-    
+    sns.publish(
+        TopicArn = sns_arn,
+        Message = body,
+        Subject = subject
+    )
+
+
 
