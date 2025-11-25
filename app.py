@@ -4,6 +4,7 @@ import os
 import aws_cdk as cdk
 
 from tripoli.tripoli_stack import TripoliStack
+from tripoli.monitoring_stack import MonitoringStack
 
 
 app = cdk.App()
@@ -24,5 +25,7 @@ TripoliStack(app, "TripoliStack",
 
     # For more information, see https://docs.aws.amazon.com/cdk/latest/guide/environments.html
     )
+
+MonitoringStack(app, "MonitoringStack")
 
 app.synth()
