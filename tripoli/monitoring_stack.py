@@ -11,9 +11,6 @@ class MonitoringStack(cdk.Stack):
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
-        #
-        # Shared naming convention — teammates must match these.
-        #
         log_ingestion_lambda_name = "tripolis-log-ingestion"
         glacier_archive_lambda_name = "tripolis-glacier-archive"
         daily_report_lambda_name = "tripolis-daily-report"
@@ -23,9 +20,7 @@ class MonitoringStack(cdk.Stack):
         archive_bucket_name = "tripolis-backup-archive"
         report_topic_name = "tripolis-daily-report-topic"
 
-        #
-        # Create the CloudWatch dashboard
-        #
+        # Creating the CloudWatch dashboard
         dashboard = cloudwatch.Dashboard(
             self,
             "TripolisPizzaDashboard",
@@ -80,7 +75,7 @@ class MonitoringStack(cdk.Stack):
         )
 
         # ============================================================
-        # 2) DAILY BACKUP COUNT (CUSTOM METRIC FROM SEAN)
+        # 2) DAILY BACKUP COUNT
         # ============================================================
 
         daily_backup_count = cloudwatch.Metric(
@@ -150,7 +145,7 @@ class MonitoringStack(cdk.Stack):
         )
 
         # ============================================================
-        # 4) GLACIER ARCHIVE LAMBDA (KEVIN)
+        # 4) GLACIER ARCHIVE LAMBDA
         # ============================================================
 
         glacier_errors = cloudwatch.Metric(
@@ -170,7 +165,7 @@ class MonitoringStack(cdk.Stack):
         )
 
         # ============================================================
-        # 5) DAILY REPORT LAMBDA + SNS (SEAN)
+        # 5) DAILY REPORT LAMBDA + SNS
         # ============================================================
 
         report_errors = cloudwatch.Metric(
@@ -206,13 +201,13 @@ class MonitoringStack(cdk.Stack):
         )
 
         # ============================================================
-        # 6) OPTIONAL ALARM: DAILY BACKUPS TOO LOW OVER 7 DAYS
+        # 6) ALARM: DAILY BACKUPS TOO LOW OVER 7 DAYS
         # ============================================================
 
         low_backup_alarm = daily_backup_count.create_alarm(
             self,
             "LowBackupAlarm",
-            threshold=6,  # fewer than 6 backups/day is a problem
+            threshold=6,
             evaluation_periods=7,  # over the last 7 days
             comparison_operator=cloudwatch.ComparisonOperator.LESS_THAN_THRESHOLD,
         )
