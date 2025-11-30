@@ -15,38 +15,14 @@ class MonitoringStack(cdk.Stack):
         glacier_archive_lambda_name = "tripolis-glacier-archive"
         daily_report_lambda_name = "tripolis-daily-report"
 
-        logs_queue_name = "tripolis-backup-logs"
         backup_bucket_name = "tripolis-backup-raw"
         archive_bucket_name = "tripolis-backup-archive"
         report_topic_name = "tripolis-daily-report-topic"
 
-        # Creating the CloudWatch dashboard
         dashboard = cloudwatch.Dashboard(
             self,
             "TripolisPizzaDashboard",
             dashboard_name="TripolisPizza-CloudDashboard",
-        )
-
-        # ============================================================
-        # 1) INCOMING DATA: SQS + LOG INGESTION LAMBDA
-        # ============================================================
-
-        # How many log messages are entering the system
-        sqs_messages_sent = cloudwatch.Metric(
-            namespace="AWS/SQS",
-            metric_name="NumberOfMessagesSent",
-            dimensions_map={"QueueName": logs_queue_name},
-            statistic="Sum",
-            period=Duration.minutes(5),
-        )
-
-        # How many messages are still waiting to be processed
-        sqs_backlog = cloudwatch.Metric(
-            namespace="AWS/SQS",
-            metric_name="ApproximateNumberOfMessagesVisible",
-            dimensions_map={"QueueName": logs_queue_name},
-            statistic="Average",
-            period=Duration.minutes(5),
         )
 
         # Log ingestion Lambda metrics
@@ -74,10 +50,7 @@ class MonitoringStack(cdk.Stack):
             period=Duration.minutes(5),
         )
 
-        # ============================================================
-        # 2) DAILY BACKUP COUNT
-        # ============================================================
-
+        # Daily backup custom metric
         daily_backup_count = cloudwatch.Metric(
             namespace="TripolisPizza/ReportingSystem",
             metric_name="DailyBackupCount",
@@ -85,20 +58,7 @@ class MonitoringStack(cdk.Stack):
             period=Duration.days(1),
         )
 
-        # ============================================================
-        # 3) SERVICE HEALTH: SQS + S3 (BACKUP + ARCHIVE)
-        # ============================================================
-
-        # SQS Queue Age: are we falling behind?
-        sqs_age = cloudwatch.Metric(
-            namespace="AWS/SQS",
-            metric_name="ApproximateAgeOfOldestMessage",
-            dimensions_map={"QueueName": logs_queue_name},
-            statistic="Maximum",
-            period=Duration.minutes(5),
-        )
-
-        # S3 current backup bucket
+        # S3: current backup bucket
         backup_objects = cloudwatch.Metric(
             namespace="AWS/S3",
             metric_name="NumberOfObjects",
@@ -121,7 +81,7 @@ class MonitoringStack(cdk.Stack):
             period=Duration.hours(1),
         )
 
-        # S3 archive bucket (Glacier)
+        # S3: archive / Glacier bucket
         archive_objects = cloudwatch.Metric(
             namespace="AWS/S3",
             metric_name="NumberOfObjects",
@@ -144,10 +104,7 @@ class MonitoringStack(cdk.Stack):
             period=Duration.hours(1),
         )
 
-        # ============================================================
-        # 4) GLACIER ARCHIVE LAMBDA
-        # ============================================================
-
+        # Glacier archive Lambda
         glacier_errors = cloudwatch.Metric(
             namespace="AWS/Lambda",
             metric_name="Errors",
@@ -164,10 +121,7 @@ class MonitoringStack(cdk.Stack):
             period=Duration.minutes(5),
         )
 
-        # ============================================================
-        # 5) DAILY REPORT LAMBDA + SNS
-        # ============================================================
-
+        # Daily report Lambda
         report_errors = cloudwatch.Metric(
             namespace="AWS/Lambda",
             metric_name="Errors",
@@ -184,6 +138,7 @@ class MonitoringStack(cdk.Stack):
             period=Duration.minutes(5),
         )
 
+        # SNS report topic
         sns_delivered = cloudwatch.Metric(
             namespace="AWS/SNS",
             metric_name="NumberOfNotificationsDelivered",
@@ -200,38 +155,16 @@ class MonitoringStack(cdk.Stack):
             period=Duration.minutes(5),
         )
 
-        # ============================================================
-        # 6) ALARM: DAILY BACKUPS TOO LOW OVER 7 DAYS
-        # ============================================================
-
+        # If daily backups too low over 7 days
         low_backup_alarm = daily_backup_count.create_alarm(
             self,
             "LowBackupAlarm",
-            threshold=6,
+            threshold=6,  # fewer than 6 backups/day is a problem
             evaluation_periods=7,  # over the last 7 days
             comparison_operator=cloudwatch.ComparisonOperator.LESS_THAN_THRESHOLD,
         )
 
-        # ========== ROW 1: SQS Incoming Logs & Queue Health ==========
-        dashboard.add_widgets(
-            cloudwatch.GraphWidget(
-                title="Incoming Logs (SQS Messages Sent)",
-                left=[sqs_messages_sent],
-                width=8,
-            ),
-            cloudwatch.GraphWidget(
-                title="SQS Backlog (Messages Waiting)",
-                left=[sqs_backlog],
-                width=8,
-            ),
-            cloudwatch.GraphWidget(
-                title="SQS Queue Age (Oldest Message)",
-                left=[sqs_age],
-                width=8,
-            ),
-        )
-
-        # ========== ROW 2: Ingestion Lambda & Glacier Archive Lambda ==========
+        # ROW 1
         dashboard.add_widgets(
             cloudwatch.GraphWidget(
                 title="Log Ingestion Lambda: Invocations & Errors",
@@ -245,14 +178,13 @@ class MonitoringStack(cdk.Stack):
                 width=8,
             ),
             cloudwatch.GraphWidget(
-                title="Glacier Archive Lambda: Duration & Errors",
-                left=[glacier_duration],
-                right=[glacier_errors],
+                title="Daily Backup Count",
+                left=[daily_backup_count],
                 width=8,
             ),
         )
 
-        # ========== ROW 3: Storage & Daily Backup Count ==========
+        # ROW 2
         dashboard.add_widgets(
             cloudwatch.GraphWidget(
                 title="S3 Current Backups: Objects & Size",
@@ -267,13 +199,14 @@ class MonitoringStack(cdk.Stack):
                 width=8,
             ),
             cloudwatch.GraphWidget(
-                title="Daily Backup Count",
-                left=[daily_backup_count],
+                title="Glacier Archive Lambda: Duration & Errors",
+                left=[glacier_duration],
+                right=[glacier_errors],
                 width=8,
             ),
         )
 
-        # ========== ROW 4: Reporting Lambda, SNS Health, Alarm ==========
+        # ROW 3
         dashboard.add_widgets(
             cloudwatch.GraphWidget(
                 title="Daily Report Lambda: Duration & Errors",
@@ -291,4 +224,4 @@ class MonitoringStack(cdk.Stack):
                 alarm=low_backup_alarm,
                 width=8,
             ),
-        )        
+        )
