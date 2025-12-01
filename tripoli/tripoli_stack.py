@@ -58,6 +58,7 @@ class TripoliStack(Stack):
 
         temp_bucket.grant_read(report_lambda)
         report_bucket.grant_put(report_lambda)
+        report_bucket.grant_read(report_lambda)
         report_message.grant_publish(report_lambda)
 
         # event bridge trigger for reporter lambda
