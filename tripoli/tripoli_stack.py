@@ -37,11 +37,13 @@ class TripoliStack(Stack):
             "ReporterLambda",
             runtime = lambda_.Runtime.PYTHON_3_13,
             code = lambda_.Code.from_asset("lambda"),
-            handler = "reporter.handler",
+            handler = "reporter.lambda_handler",
             environment = {
                 "INPUT_BUCKET_NAME" : temp_bucket.bucket_name,
                 "OUTPUT_BUCKET_NAME" : report_bucket.bucket_name,
-                "REPORTER_SNS_ARN" : report_message.topic_arn
+                "REPORTER_SNS_ARN" : report_message.topic_arn,
+                "CUTOFF_HOUR" : "24",
+                "REPORT_URL_EXPIRATION_SECONDS" : "86400"
             }
         )
 

@@ -13,9 +13,13 @@ def lambda_handler(event, context):
     OUT_BUCKET = os.environ.get("OUTPUT_BUCKET_NAME")
     SNS_ARN  = os.environ.get("REPORTER_SNS_ARN")
 
+    CUTOFF = os.environ.get("CUTOFF_HOUR")
+    EXPIRE = os.environ.get("REPORT_URL_EXPIRATION_SECONDS")
     
+    CUTOFF_FLOAT = float(CUTOFF)
+    EXPIRE_INT = int(EXPIRE)
     
-    time_prev = datetime.now(timezone.utc) - timedelta(hours = 24)
+    time_prev = datetime.now(timezone.utc) - timedelta(hours = CUTOFF_FLOAT)
     filename_list = []
 
     pagin = s3.get_paginator("list_objects_v2")
@@ -41,7 +45,8 @@ def lambda_handler(event, context):
     time_now = datetime.now(timezone.utc)
     bucket_key = f"report-{time_now}.csv"
     
-    s3.Bucket(OUT_BUCKET).put_object(
+    s3.put_object(
+        Bucket = OUT_BUCKET,
         Key = bucket_key,
         Body = content,
         ContentType = "text/csv"
@@ -50,7 +55,7 @@ def lambda_handler(event, context):
     url = s3.generate_presigned_url(
         ClientMethod = "get_object",
         Params = {"Bucket": OUT_BUCKET, "Key": bucket_key},
-        ExpiresIn = 86400
+        ExpiresIn = EXPIRE_INT
     )
 
 
