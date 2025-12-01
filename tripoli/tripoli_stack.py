@@ -23,7 +23,7 @@ class TripoliStack(Stack):
         # )
 
         # temporary log storage
-        # replace this bucket and add trigger for lambda
+        # replace this bucket
         temp_bucket = s3.Bucket(self, "TempBucket")
 
         # bucket for reports

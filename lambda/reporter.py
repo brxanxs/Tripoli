@@ -4,62 +4,61 @@ import io
 import csv
 import os
 
-IN_BUCKET = 'TempBucket'
-OUT_BUCKET = 'ReportBucket'
-
-s3 = boto3.client('s3')
-sns = boto3.client('sns')
-
 def lambda_handler(event, context):
+
+    s3 = boto3.client("s3")
+    sns = boto3.client("sns")
+
+    IN_BUCKET = os.environ.get("INPUT_BUCKET_NAME")
+    OUT_BUCKET = os.environ.get("OUTPUT_BUCKET_NAME")
+    SNS_ARN  = os.environ.get("REPORTER_SNS_ARN")
+
+    
     
     time_prev = datetime.now(timezone.utc) - timedelta(hours = 24)
     filename_list = []
 
-    pagin = s3.get_paginator('list_objects_v2')
+    pagin = s3.get_paginator("list_objects_v2")
     pages = pagin.paginate(Bucket = IN_BUCKET)
 
     for page in pages:
-        if 'Contents' in page:
-            for obj in page['Contents']:
-                last_mod = obj['LastModified']
+        if "Contents" in page:
+            for obj in page["Contents"]:
+                last_mod = obj["LastModified"]
                 if last_mod > time_prev:
-                    filename_list.append({'filename' : obj['Key'], 'uploaded' : last_mod })
+                    filename_list.append({"filename" : obj["Key"], "uploaded" : last_mod })
     
     stream = io.StringIO()
     writer = csv.writer(stream)
-    header = ['Filename', 'Date_Uploaded']
+    header = ["Filename", "Date_Uploaded"]
     writer.writerow(header)
 
     for row in filename_list:
-        writer.writerow([row['filename', 'uploaded']])
+        writer.writerow([row["filename", "uploaded"]])
 
     content = stream.getvalue()
 
     time_now = datetime.now(timezone.utc)
-    bucket_key = f'report-{time_now}.csv'
+    bucket_key = f"report-{time_now}.csv"
     
     s3.Bucket(OUT_BUCKET).put_object(
         Key = bucket_key,
         Body = content,
-        ContentType = 'text/csv'
+        ContentType = "text/csv"
     )
 
     url = s3.generate_presigned_url(
-        ClientMethod = 'get_object',
-        Params = {'Bucket': OUT_BUCKET, 'Key': bucket_key},
+        ClientMethod = "get_object",
+        Params = {"Bucket": OUT_BUCKET, "Key": bucket_key},
         ExpiresIn = 86400
     )
 
 
-    subject = 'File Report'
-    body = f'{url}'
-    sns_arn = os.environ.get('ReportSNS')
+    subject = "File Report"
+    body = f"{url}"
 
     sns.publish(
-        TopicArn = sns_arn,
+        TopicArn = SNS_ARN,
         Message = body,
         Subject = subject
     )
-
-
-
