@@ -5,6 +5,7 @@ from aws_cdk import (
     aws_s3 as s3,
     aws_lambda as lambda_,
     aws_sns as sns,
+    aws_sns_subscriptions as subs,
     aws_events as events,
     aws_events_targets as targets,
     aws_apigateway as apig,
@@ -34,6 +35,8 @@ class TripoliStack(Stack):
 
         # sns for sending reports
         report_message = sns.Topic(self, "ReportSNS")
+
+        report_message.add_subscription(subs.EmailSubscription("Sean_Tong@student.uml.edu"))
 
         # lambda for making the report
         # cutoff is for what files in the last hours should be reported
@@ -73,6 +76,7 @@ class TripoliStack(Stack):
 
         report_schedule.add_target(targets.LambdaFunction(report_lambda))
 
+        # api to publish the report whenever
         report_api = apig.LambdaRestApi(
             self,
             "ReporterAPI",
