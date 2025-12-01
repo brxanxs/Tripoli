@@ -32,6 +32,24 @@ class TripoliStack(Stack):
         # sns for sending reports
         report_message = sns.Topic(self, "ReportSNS")
 
+        report_lambda = lambda_.Function(
+            self,
+            "ReporterLambda",
+            runtime = lambda_.Runtime.PYTHON_3_13,
+            code = lambda_.Code.from_asset("lambda"),
+            handler = "reporter.handler",
+            environment = {
+                "INPUT_BUCKET_NAME" : temp_bucket.bucket_name,
+                "OUTPUT_BUCKET_NAME" : report_bucket.bucket_name,
+                "REPORTER_SNS_ARN" : report_message.topic_arn
+            }
+        )
+
+        temp_bucket.grant_read(report_lambda)
+        report_bucket.grant_put(report_lambda)
+        report_message.grant_publish(report_lambda)
+
+
 
 
 
