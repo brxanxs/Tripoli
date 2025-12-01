@@ -5,6 +5,8 @@ from aws_cdk import (
     aws_s3 as s3,
     aws_lambda as lambda_,
     aws_sns as sns,
+    aws_events as events,
+    aws_events_targets as targets,
 )
 from constructs import Construct
 
@@ -32,6 +34,9 @@ class TripoliStack(Stack):
         # sns for sending reports
         report_message = sns.Topic(self, "ReportSNS")
 
+        # lambda for making the report
+        # cutoff is for what files in the last hours should be reported
+        # expiration is how long the URL will last in seconds
         report_lambda = lambda_.Function(
             self,
             "ReporterLambda",
@@ -51,7 +56,20 @@ class TripoliStack(Stack):
         report_bucket.grant_put(report_lambda)
         report_message.grant_publish(report_lambda)
 
+        # event bridge trigger for reporter lambda
+        # In UTC time, every day, at 11 am
+        report_schedule = events.Rule(
+            self, 
+            "ReportSchedule",
+            schedule = events.Schedule.cron(
+                minute = "0",
+                hour = "11",
+                day = "*",
+                month = "*",
+                year = "*",
+            )
+        )
 
+        report_schedule.add_target(targets.LambdaFunction(report_lambda))
 
-
-
+        

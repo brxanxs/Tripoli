@@ -58,7 +58,6 @@ def lambda_handler(event, context):
         ExpiresIn = EXPIRE_INT
     )
 
-
     subject = "File Report"
     body = f"{url}"
 
