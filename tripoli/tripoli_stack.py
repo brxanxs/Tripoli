@@ -1,5 +1,5 @@
+import json
 from aws_cdk import (
-    # Duration,
     Stack,
     Duration,
     CfnOutput,
@@ -7,9 +7,11 @@ from aws_cdk import (
     aws_lambda as _lambda,
     aws_apigateway as apigw,
     aws_ssm as ssm,
+    aws_iam as iam,
 )
 from constructs import Construct
 
+TRIPOLI = "Tripoli"
 DATACENTERS = ["valdez", "vegas"]
 
 class TripoliStack(Stack):
@@ -17,64 +19,73 @@ class TripoliStack(Stack):
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
+        bucketMap = {}
+        buckets = {}
+        
+        # Create s3 buckets
         for dc in DATACENTERS:
-            name = "backup-" + dc
-
-            bucketName = "Bucket_" + name
-            bucket = s3.Bucket(self, bucketName,
+            CDK_bucketName = f"{TRIPOLI}-{dc}Bucket"
+            bucket = s3.Bucket(self, CDK_bucketName,
                 block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
                 encryption=s3.BucketEncryption.S3_MANAGED,
-                versioned=False
-            )
+                versioned=False)
+            bucketMap[dc] = bucket.bucket_name
+            buckets[dc] = bucket
 
-            fnName = "Lambda_" + name
-            fn = _lambda.Function(self, fnName,
-                runtime=_lambda.Runtime.PYTHON_3_12,
-                handler="presign_url.handler",
-                code=_lambda.Code.from_asset("lambda"),
-                timeout=Duration.seconds(30),
-                environment={"BUCKET_NAME": bucketName}
-            )
-            
-            # Lambda permission
-            bucket.grant_put(fn)
+        # Create Lambda
+        CDK_lambdaName = f"{TRIPOLI}-PresignURL"
+        urlExpirySeconds = 3600
+        lambdaTimeoutSeconds = 30  # Lambda max timeout is 900 seconds (15 min)
+        fn = _lambda.Function(self, CDK_lambdaName,
+            runtime=_lambda.Runtime.PYTHON_3_12,
+            handler="presign_url.main",
+            code=_lambda.Code.from_asset("lambda"),
+            timeout=Duration.seconds(lambdaTimeoutSeconds),
+            environment={
+                "SSM_bucketMap_PARAM": "/tripoli/buckets",
+                "URL_EXPIRATION": str(urlExpirySeconds)
+            })
 
-            # API endpoint
-            apiName = "ApiEndpoint_" + name
-            apiEndpoint = apigw.RestApi(
-                self, apiName,
-                deploy_options=apigw.StageOptions(stage_name="prod"),
-                api_key_source_type=apigw.ApiKeySourceType.HEADER
-            )
-            
-            # API method with Lambda function
-            fn_integration = apigw.LambdaIntegration(fn)
-            fn_resource = apiEndpoint.root.add_resource("gen-url")
-            fn_resource.add_method(
-                "GET",
-                fn_integration,
-                api_key_required=True
-            )
+        # Lambda PUT permission to buckets
+        for dc in DATACENTERS:
+            buckets[dc].grant_put(fn)
 
-            # Create key
-            api_keyName = "ApiKey_" + name
-            api_key = apiEndpoint.add_api_key(api_keyName)
+        # Grant SSM read permission upfront (without specific parameter dependency)
+        fn.add_to_role_policy(iam.PolicyStatement(
+            actions=["ssm:GetParameter"],
+            resources=[f"arn:aws:ssm:{self.region}:{self.account}:parameter/tripoli/buckets"]
+        ))
 
-            # Usage plan
-            planName = "UsagePlan_" + name
-            plan = apiEndpoint.add_usage_plan(planName,
-                throttle=apigw.ThrottleSettings(
-                    rate_limit=50,
-                    burst_limit=20
-                )
-            )
-            plan.add_api_key(api_key)
-            plan.add_api_stage(
-                stage=apiEndpoint.deployment_stage
-            ) 
-            
-            # Outputs
-            CfnOutput(self, f"{dc}-BucketName", value=bucketName)
-            CfnOutput(self, f"{dc}-ApiEndpoint", value=apiEndpoint.url)
-            CfnOutput(self, f"{dc}-ApiKey", value=api_key.key_id)
+        # REST API
+        CDK_apiName = f"{TRIPOLI}-RestApiGW"
+        api = apigw.RestApi(self, CDK_apiName)
 
+        # Pass apiKey to Lambda (using proxy integration)
+        fnIntegration = apigw.LambdaIntegration(fn, proxy=True)
+        fnResource = api.root.add_resource("gen-url")
+        fnResource.add_method("POST", fnIntegration, api_key_required=True)
+
+        # Add API keys & Usage plans, and build out bucket map
+        api_key_map = {}
+        for dc in DATACENTERS:
+            CDK_keyName = f"{TRIPOLI}-{dc}-ApiKey"
+            key = api.add_api_key(CDK_keyName)
+            CDK_usagePlanName = f"{TRIPOLI}-{dc}-UsagePlan"
+            usagePlan = api.add_usage_plan(CDK_usagePlanName,
+                api_stages=[apigw.UsagePlanPerApiStage(api=api, stage=api.deployment_stage)])
+            usagePlan.add_api_key(key)
+
+            # Map API key ID to bucket
+            api_key_map[key.key_id] = bucketMap[dc]
+
+            # Outputs key IDs
+            CfnOutput(self, f"{dc}-ApiKeyID", value=key.key_id)
+
+        # Create SSM SP with API key to bucket mapping
+        CDK_ssmName = f"{TRIPOLI}-BucketMapSP"
+        bucketMapSSM = ssm.StringParameter(self, CDK_ssmName,
+            parameter_name="/tripoli/buckets",
+            string_value=json.dumps(api_key_map))
+
+        # API endpoint
+        CfnOutput(self, "ApiEndpoint", value=api.url)

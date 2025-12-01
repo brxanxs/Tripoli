@@ -1,0 +1,8 @@
+## Get API key
+aws apigateway get-api-keys --include-values --query "items[?id==''].value" --output text
+
+## Get pre-signed URL
+curl -X POST -H "x-api-key: APIKEY" -H "Content-Type: application/json" -d '{"key": "filename"}' 'gen-url'
+
+## Upload file
+curl -X PUT -T /path/filename "URL"
