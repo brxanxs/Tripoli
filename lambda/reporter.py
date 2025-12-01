@@ -2,6 +2,7 @@ import boto3
 from datetime import datetime, timezone, timedelta
 import io
 import csv
+import json
 import os
 
 def lambda_handler(event, context):
@@ -66,3 +67,9 @@ def lambda_handler(event, context):
         Message = body,
         Subject = subject
     )
+
+    return {
+        "statusCode" : 200,
+        "headers" : {"Content-Type" : "text/plain"},
+        "body" : json.dumps("Report published!")
+    }

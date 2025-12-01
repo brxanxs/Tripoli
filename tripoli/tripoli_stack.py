@@ -7,6 +7,7 @@ from aws_cdk import (
     aws_sns as sns,
     aws_events as events,
     aws_events_targets as targets,
+    aws_apigateway as apig,
 )
 from constructs import Construct
 
@@ -72,4 +73,11 @@ class TripoliStack(Stack):
 
         report_schedule.add_target(targets.LambdaFunction(report_lambda))
 
-        
+        report_api = apig.LambdaRestApi(
+            self,
+            "ReporterAPI",
+            handler = report_lambda,
+            proxy = True
+        )
+
+
