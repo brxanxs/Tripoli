@@ -38,7 +38,7 @@ def lambda_handler(event, context):
     writer.writerow(header)
 
     for row in filename_list:
-        writer.writerow([row["filename", "uploaded"]])
+        writer.writerow([row["filename"], row["uploaded"]])
 
     content = stream.getvalue()
 
