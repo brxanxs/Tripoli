@@ -9,7 +9,7 @@ def lambda_handler(event, context):
     s3 = boto3.client("s3")
     sns = boto3.client("sns")
 
-    IN_BUCKET = os.environ.get("INPUT_BUCKET_NAME")
+    IN_BUCKET = os.environ.get("INPUT_BUCKET_NAME").split(",")
     OUT_BUCKET = os.environ.get("OUTPUT_BUCKET_NAME")
     SNS_ARN  = os.environ.get("REPORTER_SNS_ARN")
 
@@ -22,23 +22,28 @@ def lambda_handler(event, context):
     time_prev = datetime.now(timezone.utc) - timedelta(hours = CUTOFF_FLOAT)
     filename_list = []
 
-    pagin = s3.get_paginator("list_objects_v2")
-    pages = pagin.paginate(Bucket = IN_BUCKET)
+    for bucket_name in IN_BUCKET:
+        pagin = s3.get_paginator("list_objects_v2")
+        pages = pagin.paginate(Bucket = bucket_name)
 
-    for page in pages:
-        if "Contents" in page:
-            for obj in page["Contents"]:
-                last_mod = obj["LastModified"]
-                if last_mod > time_prev:
-                    filename_list.append({"filename" : obj["Key"], "uploaded" : last_mod })
+        for page in pages:
+            if "Contents" in page:
+                for obj in page["Contents"]:
+                    last_mod = obj["LastModified"]
+                    if last_mod > time_prev:
+                        filename_list.append({
+                            "bucketname" : bucket_name,
+                            "filename" : obj["Key"], 
+                            "uploaded" : last_mod 
+                        })
     
     stream = io.StringIO()
     writer = csv.writer(stream)
-    header = ["Filename", "Date_Uploaded"]
+    header = ["Bucket_Name", "Filename", "Date_Uploaded"]
     writer.writerow(header)
 
     for row in filename_list:
-        writer.writerow([row["filename"], row["uploaded"]])
+        writer.writerow([row["bucketname"], row["filename"], row["uploaded"]])
 
     content = stream.getvalue()
 
@@ -58,7 +63,7 @@ def lambda_handler(event, context):
         ExpiresIn = EXPIRE_INT
     )
 
-    subject = "File Report"
+    subject = f"File Report {time_now}"
     body = f"{url}"
 
     sns.publish(
