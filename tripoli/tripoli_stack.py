@@ -1,5 +1,5 @@
 from aws_cdk import (
-    # Duration,
+    Duration,
     Stack,
     # aws_sqs as sqs,
     aws_s3 as s3,
@@ -47,6 +47,7 @@ class TripoliStack(Stack):
             runtime = lambda_.Runtime.PYTHON_3_13,
             code = lambda_.Code.from_asset("lambda"),
             handler = "reporter.lambda_handler",
+            timeout = Duration.seconds(30),
             environment = {
                 "INPUT_BUCKET_NAME" : temp_bucket.bucket_name,
                 "OUTPUT_BUCKET_NAME" : report_bucket.bucket_name,
