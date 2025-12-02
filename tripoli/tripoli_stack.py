@@ -26,9 +26,14 @@ class TripoliStack(Stack):
         #     visibility_timeout=Duration.seconds(300),
         # )
 
+        dc = ["Red", "Blue"]
+        temp_buckets = []
+
         # temporary log storage
-        # replace this bucket
-        temp_bucket = s3.Bucket(self, "TempBucket")
+        # replace these buckets
+        for n in dc:
+            name = n + "Bucket"
+            temp_buckets.append(s3.Bucket(self, name))
 
         # bucket for reports
         report_bucket = s3.Bucket(self, "ReportBucket")
@@ -49,7 +54,7 @@ class TripoliStack(Stack):
             handler = "reporter.lambda_handler",
             timeout = Duration.seconds(30),
             environment = {
-                "INPUT_BUCKET_NAME" : temp_bucket.bucket_name,
+                "INPUT_BUCKET_NAME" : ",".join([b.bucket_name for b in temp_buckets]),
                 "OUTPUT_BUCKET_NAME" : report_bucket.bucket_name,
                 "REPORTER_SNS_ARN" : report_message.topic_arn,
                 "CUTOFF_HOUR" : "24",
@@ -57,7 +62,9 @@ class TripoliStack(Stack):
             }
         )
 
-        temp_bucket.grant_read(report_lambda)
+        for bucket in temp_buckets:
+            bucket.grant_read(report_lambda)
+            
         report_bucket.grant_put(report_lambda)
         report_bucket.grant_read(report_lambda)
         report_message.grant_publish(report_lambda)
