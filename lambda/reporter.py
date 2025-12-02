@@ -39,7 +39,7 @@ def lambda_handler(event, context):
     
     stream = io.StringIO()
     writer = csv.writer(stream)
-    header = ["Bucket_Name", "Filename", "Date_Uploaded"]
+    header = ["Bucket_Name", "File_Name", "Date_Uploaded"]
     writer.writerow(header)
 
     for row in filename_list:
