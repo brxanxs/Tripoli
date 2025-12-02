@@ -3,6 +3,7 @@ from aws_cdk import (
     Stack,
     Duration,
     CfnOutput,
+    RemovalPolicy,
     aws_s3 as s3,
     aws_lambda as _lambda,
     aws_apigateway as apigw,
@@ -22,20 +23,43 @@ class TripoliStack(Stack):
         bucketMap = {}
         buckets = {}
         
-        # Create s3 buckets
+        # Create s3 buckets and lifecycle rules
         for dc in DATACENTERS:
+            lifecycleRule = s3.LifecycleRule(
+                enabled=True,
+                expiration=Duration.days(365*5),
+                transitions=[
+                    s3.Transition(
+                        storage_class=s3.StorageClass.INFREQUENT_ACCESS,
+                        transition_after=Duration.days(30)),
+                    s3.Transition(
+                        storage_class=s3.StorageClass.GLACIER_INSTANT_RETRIEVAL,
+                        transition_after=Duration.days(90)
+                    ),
+                    s3.Transition(
+                        storage_class=s3.StorageClass.GLACIER,
+                        transition_after=Duration.days(180)
+                    ),
+                    s3.Transition(
+                        storage_class=s3.StorageClass.DEEP_ARCHIVE,
+                        transition_after=Duration.days(365*2)
+                    )]
+            )
             CDK_bucketName = f"{TRIPOLI}-{dc}Bucket"
             bucket = s3.Bucket(self, CDK_bucketName,
                 block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
                 encryption=s3.BucketEncryption.S3_MANAGED,
-                versioned=False)
+                versioned=False,
+                removal_policy=RemovalPolicy.DESTROY,
+                auto_delete_objects=True,
+                lifecycle_rules=[lifecycleRule])
             bucketMap[dc] = bucket.bucket_name
             buckets[dc] = bucket
 
         # Create Lambda
         CDK_lambdaName = f"{TRIPOLI}-PresignURL"
         urlExpirySeconds = 3600
-        lambdaTimeoutSeconds = 30  # Lambda max timeout is 900 seconds (15 min)
+        lambdaTimeoutSeconds = 30
         fn = _lambda.Function(self, CDK_lambdaName,
             runtime=_lambda.Runtime.PYTHON_3_12,
             handler="presign_url.main",
