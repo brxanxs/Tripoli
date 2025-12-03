@@ -4,6 +4,7 @@ from aws_cdk import (
     Duration,
     CfnOutput,
     RemovalPolicy,
+    aws_logs as logs,
     aws_s3 as s3,
     aws_lambda as _lambda,
     aws_apigateway as apigw,
@@ -20,8 +21,8 @@ class TripoliStack(Stack):
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
-        bucketMap = {}
-        buckets = {}
+        logBucketMap = {}
+        logBuckets = {}
         
         # Create s3 buckets and lifecycle rules
         for dc in DATACENTERS:
@@ -45,71 +46,71 @@ class TripoliStack(Stack):
                         transition_after=Duration.days(365*2)
                     )]
             )
-            CDK_bucketName = f"{TRIPOLI}-{dc}Bucket"
-            bucket = s3.Bucket(self, CDK_bucketName,
+            CDK_logBucketName = f"{TRIPOLI}-{dc}logBucket"
+            logBucket = s3.Bucket(self, CDK_logBucketName,
                 block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
                 encryption=s3.BucketEncryption.S3_MANAGED,
                 versioned=False,
                 removal_policy=RemovalPolicy.DESTROY,
                 auto_delete_objects=True,
                 lifecycle_rules=[lifecycleRule])
-            bucketMap[dc] = bucket.bucket_name
-            buckets[dc] = bucket
+            logBucketMap[dc] = logBucket.bucket_name
+            logBuckets[dc] = logBucket
 
         # Create Lambda
-        CDK_lambdaName = f"{TRIPOLI}-PresignURL"
+        CDK_lambdaName = f"{TRIPOLI}-Lambda-PresignURL"
         urlExpirySeconds = 3600
         lambdaTimeoutSeconds = 30
-        fn = _lambda.Function(self, CDK_lambdaName,
+        LambdaPresignURL = _lambda.Function(self, CDK_lambdaName,
             runtime=_lambda.Runtime.PYTHON_3_12,
             handler="presign_url.main",
             code=_lambda.Code.from_asset("lambda"),
             timeout=Duration.seconds(lambdaTimeoutSeconds),
             environment={
-                "SSM_bucketMap_PARAM": "/tripoli/buckets",
+                "SSM_logBucketMap_PARAM": "/tripoli/buckets",
                 "URL_EXPIRATION": str(urlExpirySeconds)
             })
 
         # Lambda PUT permission to buckets
         for dc in DATACENTERS:
-            buckets[dc].grant_put(fn)
+            logBuckets[dc].grant_put(LambdaPresignURL)
 
         # Grant SSM read permission upfront (without specific parameter dependency)
-        fn.add_to_role_policy(iam.PolicyStatement(
+        LambdaPresignURL.add_to_role_policy(iam.PolicyStatement(
             actions=["ssm:GetParameter"],
             resources=[f"arn:aws:ssm:{self.region}:{self.account}:parameter/tripoli/buckets"]
         ))
 
         # REST API
-        CDK_apiName = f"{TRIPOLI}-RestApiGW"
-        api = apigw.RestApi(self, CDK_apiName)
+        CDK_APIPresignURLName = f"{TRIPOLI}-RestApiGW"
+        APIPresignURL = apigw.RestApi(self, CDK_APIPresignURLName)
 
         # Pass apiKey to Lambda (using proxy integration)
-        fnIntegration = apigw.LambdaIntegration(fn, proxy=True)
-        fnResource = api.root.add_resource("gen-url")
-        fnResource.add_method("POST", fnIntegration, api_key_required=True)
+        LambdaPresignURLIntegration = apigw.LambdaIntegration(LambdaPresignURL, proxy=True)
+        LambdaPresignURLResource = APIPresignURL.root.add_resource("gen-url")
+        LambdaPresignURLResource.add_method("POST", LambdaPresignURLIntegration, api_key_required=True)
 
         # Add API keys & Usage plans, and build out bucket map
-        api_key_map = {}
+        PresignURLapi_key_map = {}
         for dc in DATACENTERS:
-            CDK_keyName = f"{TRIPOLI}-{dc}-ApiKey"
-            key = api.add_api_key(CDK_keyName)
+            CDK_keyName = f"{TRIPOLI}-{dc}-APIPresignURLKey"
+            key = APIPresignURL.add_api_key(CDK_keyName)
             CDK_usagePlanName = f"{TRIPOLI}-{dc}-UsagePlan"
-            usagePlan = api.add_usage_plan(CDK_usagePlanName,
-                api_stages=[apigw.UsagePlanPerApiStage(api=api, stage=api.deployment_stage)])
+            usagePlan = APIPresignURL.add_usage_plan(CDK_usagePlanName,
+                api_stages=[apigw.UsagePlanPerApiStage(api=APIPresignURL, stage=APIPresignURL.deployment_stage)])
             usagePlan.add_api_key(key)
 
             # Map API key ID to bucket
-            api_key_map[key.key_id] = bucketMap[dc]
+            PresignURLapi_key_map[key.key_id] = logBucketMap[dc]
 
             # Outputs key IDs
-            CfnOutput(self, f"{dc}-ApiKeyID", value=key.key_id)
+            CfnOutput(self, f"{dc}-APIPresignURLKeyID", value=key.key_id)
 
         # Create SSM SP with API key to bucket mapping
-        CDK_ssmName = f"{TRIPOLI}-BucketMapSP"
-        bucketMapSSM = ssm.StringParameter(self, CDK_ssmName,
+        CDK_ssmName = f"{TRIPOLI}-logBucketMapSP"
+        logBucketMapSSM = ssm.StringParameter(self, CDK_ssmName,
             parameter_name="/tripoli/buckets",
-            string_value=json.dumps(api_key_map))
+            string_value=json.dumps(PresignURLapi_key_map))
 
         # API endpoint
-        CfnOutput(self, "ApiEndpoint", value=api.url)
+        CfnOutput(self, "APIPresignURLEndpoint", value=APIPresignURL.url)
