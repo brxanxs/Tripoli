@@ -14,10 +14,12 @@ from aws_cdk import (
     aws_sns_subscriptions as subs,
     aws_events as events,
     aws_events_targets as targets,
+    aws_cloudwatch as cloudwatch,
+    aws_cloudwatch_actions as cloudwatch_actions
 )
 from constructs import Construct
 
-REPORTSUB = "Sean_Tong@student.uml.edu"
+REPORTSUB = "Brian_Frodelius@student.uml.edu"
 TRIPOLI = "Tripoli"
 DATACENTERS = ["valdez", "vegas"]
 
@@ -121,12 +123,17 @@ class TripoliStack(Stack):
         CfnOutput(self, "APIPresignURLEndpoint", value=APIPresignURL.url)
 
         # bucket for reports
+        lifecycleRule = s3.LifecycleRule(
+            enabled=True,
+            expiration=Duration.days(60)
+        )
         report_bucket = s3.Bucket(self, "ReportBucket",
             block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
             encryption=s3.BucketEncryption.S3_MANAGED,
             versioned=False,
             removal_policy=RemovalPolicy.DESTROY,
-            auto_delete_objects=True,)
+            auto_delete_objects=True,
+            lifecycle_rules=[lifecycleRule])
 
         # sns for sending reports
         report_message = sns.Topic(self, "ReportSNS")
@@ -139,7 +146,7 @@ class TripoliStack(Stack):
         report_lambda = _lambda.Function(
             self,
             "ReporterLambda",
-            runtime = _lambda.Runtime.PYTHON_3_13,
+            runtime = _lambda.Runtime.PYTHON_3_12,
             code = _lambda.Code.from_asset("lambda"),
             handler = "reporter.lambda_handler",
             timeout = Duration.seconds(30),
@@ -183,3 +190,201 @@ class TripoliStack(Stack):
             proxy = True
         )
         CfnOutput(self, "APIReportURLEndpoint", value=report_api.url)
+
+
+
+
+        ingestion_lambda_name = LambdaPresignURL.function_name
+        report_lambda_name = report_lambda.function_name
+        raw_bucket_name = logBucketMap[DATACENTERS[0]]
+
+        dashboard = cloudwatch.Dashboard(
+            self,
+            "TripolisPizzaDashboard",
+            dashboard_name="TripolisPizza-CloudDashboard"
+        )
+
+        def lambda_metric(function_name: str, metric_name: str,
+                          statistic: str = "Sum",
+                          period_minutes: int = 5) -> cloudwatch.Metric:
+            return cloudwatch.Metric(
+                namespace="AWS/Lambda",
+                metric_name=metric_name,
+                dimensions_map={"FunctionName": function_name},
+                statistic=statistic,
+                period=Duration.minutes(period_minutes),
+            )
+
+        def s3_metric(bucket_name: str, metric_name: str,
+                      storage_type: str,
+                      period_hours: int = 1) -> cloudwatch.Metric:
+            return cloudwatch.Metric(
+                namespace="AWS/S3",
+                metric_name=metric_name,
+                dimensions_map={
+                    "BucketName": bucket_name,
+                    "StorageType": storage_type,
+                },
+                statistic="Average",
+                period=Duration.hours(period_hours),
+            )
+
+        # Ingestion Lambda metrics + Success Ratio
+
+        ingestion_invocations = lambda_metric(
+            ingestion_lambda_name, "Invocations"
+        )
+        ingestion_errors = lambda_metric(
+            ingestion_lambda_name, "Errors"
+        )
+
+        # Success ratio = successful executions / total executions
+        # = IF(invocations > 0, (invocations - errors) / invocations, 1)
+        ingestion_success_ratio = cloudwatch.MathExpression(
+            expression="IF(inv > 0, (inv - err) / inv, 1)",
+            using_metrics={
+                "inv": ingestion_invocations,
+                "err": ingestion_errors,
+            },
+            period=Duration.minutes(5),
+            label="Ingestion Success Ratio",
+        )
+
+        ratio_alarm = ingestion_success_ratio.create_alarm(
+            self,
+            "IngestionSuccessRatioLow",
+            threshold=0.95,
+            evaluation_periods=3,
+            comparison_operator=cloudwatch.ComparisonOperator.LESS_THAN_THRESHOLD,
+        )
+
+        # SNS Topic for alarm notifications
+        alarm_topic = sns.Topic(
+            self,
+            "AlarmTopic",
+            topic_name="tripolis-alarm",
+        )
+
+        # Attach SNS action to the ratio alarm
+        ratio_alarm.add_alarm_action(
+            cloudwatch_actions.SnsAction(alarm_topic)
+        )
+
+
+        # Overall ingestion: how many files + total size
+        raw_total_objects = s3_metric(
+            raw_bucket_name, "NumberOfObjects", "AllStorageTypes"
+        )
+        raw_total_size = s3_metric(
+            raw_bucket_name, "BucketSizeBytes", "StandardStorage"
+        )
+
+        raw_standard_objects = s3_metric(
+            raw_bucket_name, "NumberOfObjects", "StandardStorage"
+        )
+        raw_ia_objects = s3_metric(
+            raw_bucket_name, "NumberOfObjects", "StandardIAStorage"
+        )
+        raw_glacier_ir_objects = s3_metric(
+            raw_bucket_name, "NumberOfObjects", "GlacierInstantRetrievalStorage"
+        )
+        raw_glacier_objects = s3_metric(
+            raw_bucket_name, "NumberOfObjects", "GlacierStorage"
+        )
+        raw_deep_archive_objects = s3_metric(
+            raw_bucket_name, "NumberOfObjects", "DeepArchiveStorage"
+        )
+
+        # Report Lambda metrics
+        report_duration = lambda_metric(
+            report_lambda_name, "Duration", statistic="p95"
+        )
+        report_errors = lambda_metric(
+            report_lambda_name, "Errors"
+        )
+
+        # SNS metrics (email delivery for daily report)
+        sns_notifications_delivered = cloudwatch.Metric(
+            namespace="AWS/SNS",
+            metric_name="NumberOfNotificationsDelivered",
+            dimensions_map={"TopicName": report_message.topic_name},
+            statistic="Sum",
+            period=Duration.minutes(5),
+        )
+
+        sns_notifications_failed = cloudwatch.Metric(
+            namespace="AWS/SNS",
+            metric_name="NumberOfNotificationsFailed",
+            dimensions_map={"TopicName": report_message.topic_name},
+            statistic="Sum",
+            period=Duration.minutes(5),
+        )
+
+        # DASHBOARD LAYOUT
+        dashboard.add_widgets(
+            cloudwatch.TextWidget(
+                markdown=(
+                    "# Tripolis Pizza Backup Monitoring\n"
+                    "Tracks ingestion health (success ratio), S3 backups across storage "
+                    "classes (Standard, IA, Glacier, Deep Archive), the daily report "
+                    "Lambda, SNS email delivery, and alarm notifications."
+                ),
+                width=24,
+                height=2,
+            )
+        )
+
+        # Row 1: Ingestion success ratio + alarm
+        dashboard.add_widgets(
+            cloudwatch.GraphWidget(
+                title="Ingestion Success Ratio (Successful / Total)",
+                left=[ingestion_success_ratio],
+                width=16,
+            ),
+            cloudwatch.AlarmWidget(
+                title="ALARM: Ingestion Success Ratio < 0.95",
+                alarm=ratio_alarm,
+                width=8,
+            ),
+        )
+
+        # Row 2: S3 backups (overall files + size)
+        dashboard.add_widgets(
+            cloudwatch.GraphWidget(
+                title="Raw Backup Bucket: Files & Size",
+                left=[raw_total_objects],
+                right=[raw_total_size],
+                width=24,
+            ),
+        )
+
+        # Row 3: Reporting path health (Lambda + SNS)
+        dashboard.add_widgets(
+            cloudwatch.GraphWidget(
+                title="Report Lambda: Duration & Errors",
+                left=[report_duration],
+                right=[report_errors],
+                width=12,
+            ),
+            cloudwatch.GraphWidget(
+                title="SNS Delivery Health (Delivered vs Failed)",
+                left=[sns_notifications_delivered, sns_notifications_failed],
+                width=12,
+            ),
+        )
+
+        # Row 4: Storage class distribution (Standard / IA / Glacier IR / Glacier / DA)
+        dashboard.add_widgets(
+            cloudwatch.GraphWidget(
+                title="Raw Bucket Storage Classes (Standard / IA / Glacier / DA)",
+                left=[
+                    raw_standard_objects,
+                    raw_ia_objects,
+                    raw_glacier_ir_objects,
+                    raw_glacier_objects,
+                    raw_deep_archive_objects,
+                ],
+                view=cloudwatch.GraphWidgetView.PIE,
+                width=24,
+            ),
+        )
