@@ -3,6 +3,8 @@
 import aws_cdk as cdk
 from aws_cdk import Duration
 from aws_cdk import aws_cloudwatch as cloudwatch
+from aws_cdk import aws_sns as sns
+from aws_cdk import aws_cloudwatch_actions as cloudwatch_actions
 from constructs import Construct
 
 
@@ -11,12 +13,9 @@ class MonitoringStack(cdk.Stack):
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
-        log_ingestion_lambda_name = "tripolis-log-ingestion"
-        glacier_archive_lambda_name = "tripolis-glacier-archive"
-        daily_report_lambda_name = "tripolis-daily-report"
-
-        backup_bucket_name = "tripolis-backup-raw"
-        archive_bucket_name = "tripolis-backup-archive"
+        ingestion_lambda_name = "tripolis-log-ingestion"
+        report_lambda_name = "tripolis-daily-report"
+        raw_bucket_name = "tripolis-backup-raw"
         report_topic_name = "tripolis-daily-report-topic"
 
         dashboard = cloudwatch.Dashboard(
@@ -25,121 +24,100 @@ class MonitoringStack(cdk.Stack):
             dashboard_name="TripolisPizza-CloudDashboard",
         )
 
-        # Log ingestion Lambda metrics
-        ingestion_invocations = cloudwatch.Metric(
-            namespace="AWS/Lambda",
-            metric_name="Invocations",
-            dimensions_map={"FunctionName": log_ingestion_lambda_name},
-            statistic="Sum",
-            period=Duration.minutes(5),
+        def lambda_metric(function_name: str, metric_name: str,
+                          statistic: str = "Sum",
+                          period_minutes: int = 5) -> cloudwatch.Metric:
+            return cloudwatch.Metric(
+                namespace="AWS/Lambda",
+                metric_name=metric_name,
+                dimensions_map={"FunctionName": function_name},
+                statistic=statistic,
+                period=Duration.minutes(period_minutes),
+            )
+
+        def s3_metric(bucket_name: str, metric_name: str,
+                      storage_type: str,
+                      period_hours: int = 1) -> cloudwatch.Metric:
+            return cloudwatch.Metric(
+                namespace="AWS/S3",
+                metric_name=metric_name,
+                dimensions_map={
+                    "BucketName": bucket_name,
+                    "StorageType": storage_type,
+                },
+                statistic="Average",
+                period=Duration.hours(period_hours),
+            )
+
+
+        ingestion_invocations = lambda_metric(
+            ingestion_lambda_name, "Invocations"
+        )
+        ingestion_errors = lambda_metric(
+            ingestion_lambda_name, "Errors"
         )
 
-        ingestion_errors = cloudwatch.Metric(
-            namespace="AWS/Lambda",
-            metric_name="Errors",
-            dimensions_map={"FunctionName": log_ingestion_lambda_name},
-            statistic="Sum",
-            period=Duration.minutes(5),
-        )
-
-        ingestion_duration = cloudwatch.Metric(
-            namespace="AWS/Lambda",
-            metric_name="Duration",
-            dimensions_map={"FunctionName": log_ingestion_lambda_name},
-            statistic="p95",
-            period=Duration.minutes(5),
-        )
-
-        # Daily backup custom metric
-        daily_backup_count = cloudwatch.Metric(
-            namespace="TripolisPizza/ReportingSystem",
-            metric_name="DailyBackupCount",
-            statistic="Sum",
-            period=Duration.days(1),
-        )
-
-        # S3: current backup bucket
-        backup_objects = cloudwatch.Metric(
-            namespace="AWS/S3",
-            metric_name="NumberOfObjects",
-            dimensions_map={
-                "BucketName": backup_bucket_name,
-                "StorageType": "AllStorageTypes",
+        # Success ratio = successful executions / total executions
+        # = IF(invocations > 0, (invocations - errors) / invocations, 1)
+        ingestion_success_ratio = cloudwatch.MathExpression(
+            expression="IF(inv > 0, (inv - err) / inv, 1)",
+            using_metrics={
+                "inv": ingestion_invocations,
+                "err": ingestion_errors,
             },
-            statistic="Average",
-            period=Duration.hours(1),
-        )
-
-        backup_size = cloudwatch.Metric(
-            namespace="AWS/S3",
-            metric_name="BucketSizeBytes",
-            dimensions_map={
-                "BucketName": backup_bucket_name,
-                "StorageType": "StandardStorage",
-            },
-            statistic="Average",
-            period=Duration.hours(1),
-        )
-
-        # S3: archive / Glacier bucket
-        archive_objects = cloudwatch.Metric(
-            namespace="AWS/S3",
-            metric_name="NumberOfObjects",
-            dimensions_map={
-                "BucketName": archive_bucket_name,
-                "StorageType": "AllStorageTypes",
-            },
-            statistic="Average",
-            period=Duration.hours(1),
-        )
-
-        archive_size = cloudwatch.Metric(
-            namespace="AWS/S3",
-            metric_name="BucketSizeBytes",
-            dimensions_map={
-                "BucketName": archive_bucket_name,
-                "StorageType": "StandardStorage",
-            },
-            statistic="Average",
-            period=Duration.hours(1),
-        )
-
-        # Glacier archive Lambda
-        glacier_errors = cloudwatch.Metric(
-            namespace="AWS/Lambda",
-            metric_name="Errors",
-            dimensions_map={"FunctionName": glacier_archive_lambda_name},
-            statistic="Sum",
             period=Duration.minutes(5),
+            label="Ingestion Success Ratio",
         )
 
-        glacier_duration = cloudwatch.Metric(
-            namespace="AWS/Lambda",
-            metric_name="Duration",
-            dimensions_map={"FunctionName": glacier_archive_lambda_name},
-            statistic="p95",
-            period=Duration.minutes(5),
+        ratio_alarm = ingestion_success_ratio.create_alarm(
+            self,
+            "IngestionSuccessRatioLow",
+            threshold=0.95,
+            evaluation_periods=3,
+            comparison_operator=cloudwatch.ComparisonOperator.LESS_THAN_THRESHOLD,
         )
 
-        # Daily report Lambda
-        report_errors = cloudwatch.Metric(
-            namespace="AWS/Lambda",
-            metric_name="Errors",
-            dimensions_map={"FunctionName": daily_report_lambda_name},
-            statistic="Sum",
-            period=Duration.minutes(5),
+        # SNS Topic for alarm notifications
+        alarm_topic = sns.Topic(
+            self,
+            "AlarmTopic",
+            topic_name="tripolis-alarm-topic",
         )
 
-        report_duration = cloudwatch.Metric(
-            namespace="AWS/Lambda",
-            metric_name="Duration",
-            dimensions_map={"FunctionName": daily_report_lambda_name},
-            statistic="p95",
-            period=Duration.minutes(5),
+        # Attach SNS action to the ratio alarm
+        ratio_alarm.add_alarm_action(
+            cloudwatch_actions.SnsAction(alarm_topic)
         )
 
-        # SNS report topic
-        sns_delivered = cloudwatch.Metric(
+        # S3 ingestion / storage metrics (raw bucket)
+        raw_object_count = s3_metric(
+            raw_bucket_name, "NumberOfObjects", "AllStorageTypes"
+        )
+        raw_bucket_size = s3_metric(
+            raw_bucket_name, "BucketSizeBytes", "StandardStorage"
+        )
+
+        # Storage-class breakdown for distribution (pie)
+        raw_standard_objects = s3_metric(
+            raw_bucket_name, "NumberOfObjects", "StandardStorage"
+        )
+        raw_standard_ia_objects = s3_metric(
+            raw_bucket_name, "NumberOfObjects", "StandardIAStorage"
+        )
+        raw_intelligent_objects = s3_metric(
+            raw_bucket_name, "NumberOfObjects", "IntelligentTieringFAStorage"
+        )
+
+        # Report Lambda metrics
+        report_duration = lambda_metric(
+            report_lambda_name, "Duration", statistic="p95"
+        )
+        report_errors = lambda_metric(
+            report_lambda_name, "Errors"
+        )
+
+        # SNS metrics (email delivery for daily report)
+        sns_notifications_delivered = cloudwatch.Metric(
             namespace="AWS/SNS",
             metric_name="NumberOfNotificationsDelivered",
             dimensions_map={"TopicName": report_topic_name},
@@ -147,7 +125,7 @@ class MonitoringStack(cdk.Stack):
             period=Duration.minutes(5),
         )
 
-        sns_failed = cloudwatch.Metric(
+        sns_notifications_failed = cloudwatch.Metric(
             namespace="AWS/SNS",
             metric_name="NumberOfNotificationsFailed",
             dimensions_map={"TopicName": report_topic_name},
@@ -155,73 +133,68 @@ class MonitoringStack(cdk.Stack):
             period=Duration.minutes(5),
         )
 
-        # If daily backups too low over 7 days
-        low_backup_alarm = daily_backup_count.create_alarm(
-            self,
-            "LowBackupAlarm",
-            threshold=6,  # fewer than 6 backups/day is a problem
-            evaluation_periods=7,  # over the last 7 days
-            comparison_operator=cloudwatch.ComparisonOperator.LESS_THAN_THRESHOLD,
+        # DASHBOARD LAYOUT
+        dashboard.add_widgets(
+            cloudwatch.TextWidget(
+                markdown=(
+                    "# Tripolis Pizza Backup Monitoring\n"
+                    "Tracks ingestion health (success ratio), S3 backups, the daily "
+                    "report Lambda, SNS email delivery, and alarm notifications."
+                ),
+                width=24,
+                height=2,
+            )
         )
 
-        # ROW 1
+        # Row 1: Ingestion success ratio + alarm
         dashboard.add_widgets(
             cloudwatch.GraphWidget(
-                title="Log Ingestion Lambda: Invocations & Errors",
-                left=[ingestion_invocations],
-                right=[ingestion_errors],
-                width=8,
-            ),
-            cloudwatch.GraphWidget(
-                title="Log Ingestion Lambda: Duration (p95)",
-                left=[ingestion_duration],
-                width=8,
-            ),
-            cloudwatch.GraphWidget(
-                title="Daily Backup Count",
-                left=[daily_backup_count],
-                width=8,
-            ),
-        )
-
-        # ROW 2
-        dashboard.add_widgets(
-            cloudwatch.GraphWidget(
-                title="S3 Current Backups: Objects & Size",
-                left=[backup_objects],
-                right=[backup_size],
-                width=8,
-            ),
-            cloudwatch.GraphWidget(
-                title="S3 Archive (Glacier) Bucket: Objects & Size",
-                left=[archive_objects],
-                right=[archive_size],
-                width=8,
-            ),
-            cloudwatch.GraphWidget(
-                title="Glacier Archive Lambda: Duration & Errors",
-                left=[glacier_duration],
-                right=[glacier_errors],
-                width=8,
-            ),
-        )
-
-        # ROW 3
-        dashboard.add_widgets(
-            cloudwatch.GraphWidget(
-                title="Daily Report Lambda: Duration & Errors",
-                left=[report_duration],
-                right=[report_errors],
-                width=8,
-            ),
-            cloudwatch.GraphWidget(
-                title="SNS Report Delivery Health",
-                left=[sns_delivered, sns_failed],
-                width=8,
+                title="Ingestion Success Ratio (Successful / Total)",
+                left=[ingestion_success_ratio],
+                width=16,
             ),
             cloudwatch.AlarmWidget(
-                title="Daily Backups < 6 (7-day Alarm)",
-                alarm=low_backup_alarm,
+                title="ALARM: Ingestion Success Ratio < 0.95",
+                alarm=ratio_alarm,
                 width=8,
+            ),
+        )
+
+        # Row 2: S3 backups (how much has been ingested)
+        dashboard.add_widgets(
+            cloudwatch.GraphWidget(
+                title="Raw Backup Bucket: Files & Size",
+                left=[raw_object_count],
+                right=[raw_bucket_size],
+                width=24,
+            ),
+        )
+
+        # Row 3: Reporting path health (Lambda + SNS)
+        dashboard.add_widgets(
+            cloudwatch.GraphWidget(
+                title="Report Lambda: Duration & Errors",
+                left=[report_duration],
+                right=[report_errors],
+                width=12,
+            ),
+            cloudwatch.GraphWidget(
+                title="SNS Delivery Health (Delivered vs Failed)",
+                left=[sns_notifications_delivered, sns_notifications_failed],
+                width=12,
+            ),
+        )
+
+        # Row 4: Storage class distribution (visually shows ratio of classes)
+        dashboard.add_widgets(
+            cloudwatch.GraphWidget(
+                title="Raw Bucket Storage Classes (Distribution)",
+                left=[
+                    raw_standard_objects,
+                    raw_standard_ia_objects,
+                    raw_intelligent_objects,
+                ],
+                view=cloudwatch.GraphWidgetView.PIE,
+                width=24,
             ),
         )
