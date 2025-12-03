@@ -7,7 +7,7 @@ s3 = boto3.client("s3")
 
 def main(event, context):
     # Get bucketMap with env and SSM
-    paramName = os.environ["SSM_bucketMap_PARAM"]
+    paramName = os.environ["SSM_logBucketMap_PARAM"]
     resp = ssm.get_parameter(Name=paramName)
     bucketMap = json.loads(resp["Parameter"]["Value"])
 

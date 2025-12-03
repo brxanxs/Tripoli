@@ -10,9 +10,14 @@ from aws_cdk import (
     aws_apigateway as apigw,
     aws_ssm as ssm,
     aws_iam as iam,
+    aws_sns as sns,
+    aws_sns_subscriptions as subs,
+    aws_events as events,
+    aws_events_targets as targets,
 )
 from constructs import Construct
 
+REPORTSUB = "Sean_Tong@student.uml.edu"
 TRIPOLI = "Tripoli"
 DATACENTERS = ["valdez", "vegas"]
 
@@ -114,3 +119,67 @@ class TripoliStack(Stack):
 
         # API endpoint
         CfnOutput(self, "APIPresignURLEndpoint", value=APIPresignURL.url)
+
+        # bucket for reports
+        report_bucket = s3.Bucket(self, "ReportBucket",
+            block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
+            encryption=s3.BucketEncryption.S3_MANAGED,
+            versioned=False,
+            removal_policy=RemovalPolicy.DESTROY,
+            auto_delete_objects=True,)
+
+        # sns for sending reports
+        report_message = sns.Topic(self, "ReportSNS")
+
+        report_message.add_subscription(subs.EmailSubscription(REPORTSUB))
+
+        # lambda for making the report
+        # cutoff is for what files in the last hours should be reported
+        # expiration is how long the URL will last in seconds
+        report_lambda = _lambda.Function(
+            self,
+            "ReporterLambda",
+            runtime = _lambda.Runtime.PYTHON_3_13,
+            code = _lambda.Code.from_asset("lambda"),
+            handler = "reporter.lambda_handler",
+            timeout = Duration.seconds(30),
+            environment = {
+                "INPUT_BUCKET_NAME" : ",".join([logBuckets[dc].bucket_name for dc in DATACENTERS]),
+                "OUTPUT_BUCKET_NAME" : report_bucket.bucket_name,
+                "REPORTER_SNS_ARN" : report_message.topic_arn,
+                "CUTOFF_HOUR" : "24",
+                "REPORT_URL_EXPIRATION_SECONDS" : "86400"
+            }
+        )
+
+        for dc in DATACENTERS:
+            logBuckets[dc].grant_read(report_lambda)
+            
+        report_bucket.grant_put(report_lambda)
+        report_bucket.grant_read(report_lambda)
+        report_message.grant_publish(report_lambda)
+
+        # event bridge trigger for reporter lambda
+        # In UTC time, every day, at 11 am
+        report_schedule = events.Rule(
+            self, 
+            "ReportSchedule",
+            schedule = events.Schedule.cron(
+                minute = "0",
+                hour = "11",
+                day = "*",
+                month = "*",
+                year = "*",
+            )
+        )
+
+        report_schedule.add_target(targets.LambdaFunction(report_lambda))
+
+        # api to publish the report whenever
+        report_api = apigw.LambdaRestApi(
+            self,
+            "ReporterAPI",
+            handler = report_lambda,
+            proxy = True
+        )
+        CfnOutput(self, "APIReportURLEndpoint", value=report_api.url)
