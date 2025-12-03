@@ -49,6 +49,7 @@ class MonitoringStack(cdk.Stack):
                 period=Duration.hours(period_hours),
             )
 
+        # Ingestion Lambda metrics + Success Ratio
 
         ingestion_invocations = lambda_metric(
             ingestion_lambda_name, "Invocations"
@@ -89,23 +90,29 @@ class MonitoringStack(cdk.Stack):
             cloudwatch_actions.SnsAction(alarm_topic)
         )
 
-        # S3 ingestion / storage metrics (raw bucket)
-        raw_object_count = s3_metric(
+
+        # Overall ingestion: how many files + total size
+        raw_total_objects = s3_metric(
             raw_bucket_name, "NumberOfObjects", "AllStorageTypes"
         )
-        raw_bucket_size = s3_metric(
+        raw_total_size = s3_metric(
             raw_bucket_name, "BucketSizeBytes", "StandardStorage"
         )
 
-        # Storage-class breakdown for distribution (pie)
         raw_standard_objects = s3_metric(
             raw_bucket_name, "NumberOfObjects", "StandardStorage"
         )
-        raw_standard_ia_objects = s3_metric(
+        raw_ia_objects = s3_metric(
             raw_bucket_name, "NumberOfObjects", "StandardIAStorage"
         )
-        raw_intelligent_objects = s3_metric(
-            raw_bucket_name, "NumberOfObjects", "IntelligentTieringFAStorage"
+        raw_glacier_ir_objects = s3_metric(
+            raw_bucket_name, "NumberOfObjects", "GlacierInstantRetrievalStorage"
+        )
+        raw_glacier_objects = s3_metric(
+            raw_bucket_name, "NumberOfObjects", "GlacierStorage"
+        )
+        raw_deep_archive_objects = s3_metric(
+            raw_bucket_name, "NumberOfObjects", "DeepArchiveStorage"
         )
 
         # Report Lambda metrics
@@ -138,8 +145,9 @@ class MonitoringStack(cdk.Stack):
             cloudwatch.TextWidget(
                 markdown=(
                     "# Tripolis Pizza Backup Monitoring\n"
-                    "Tracks ingestion health (success ratio), S3 backups, the daily "
-                    "report Lambda, SNS email delivery, and alarm notifications."
+                    "Tracks ingestion health (success ratio), S3 backups across storage "
+                    "classes (Standard, IA, Glacier, Deep Archive), the daily report "
+                    "Lambda, SNS email delivery, and alarm notifications."
                 ),
                 width=24,
                 height=2,
@@ -160,12 +168,12 @@ class MonitoringStack(cdk.Stack):
             ),
         )
 
-        # Row 2: S3 backups (how much has been ingested)
+        # Row 2: S3 backups (overall files + size)
         dashboard.add_widgets(
             cloudwatch.GraphWidget(
                 title="Raw Backup Bucket: Files & Size",
-                left=[raw_object_count],
-                right=[raw_bucket_size],
+                left=[raw_total_objects],
+                right=[raw_total_size],
                 width=24,
             ),
         )
@@ -185,14 +193,16 @@ class MonitoringStack(cdk.Stack):
             ),
         )
 
-        # Row 4: Storage class distribution (visually shows ratio of classes)
+        # Row 4: Storage class distribution (Standard / IA / Glacier IR / Glacier / DA)
         dashboard.add_widgets(
             cloudwatch.GraphWidget(
-                title="Raw Bucket Storage Classes (Distribution)",
+                title="Raw Bucket Storage Classes (Standard / IA / Glacier / DA)",
                 left=[
                     raw_standard_objects,
-                    raw_standard_ia_objects,
-                    raw_intelligent_objects,
+                    raw_ia_objects,
+                    raw_glacier_ir_objects,
+                    raw_glacier_objects,
+                    raw_deep_archive_objects,
                 ],
                 view=cloudwatch.GraphWidgetView.PIE,
                 width=24,
