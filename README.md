@@ -1,4 +1,5 @@
 
+##
 # Welcome to your CDK Python project!
 
 This is a blank project for CDK development with Python.
@@ -54,5 +55,32 @@ command.
  * `cdk deploy`      deploy this stack to your default AWS account/region
  * `cdk diff`        compare deployed stack with current state
  * `cdk docs`        open CDK documentation
+
+##
+# CloudWatch Dashboard (Monitoring)
+
+This project includes a CloudWatch dashboard that tracks:
+
+- Ingestion success ratio for `tripolis-log-ingestion`
+- Total objects and size of the S3 backup bucket
+- Storage-class distribution (Standard, IA, Glacier IR, Glacier, Deep Archive)
+- Daily report Lambda duration and errors (`tripolis-daily-report`)
+- SNS delivery metrics for daily report emails
+
+An alarm is configured to trigger when the ingestion success ratio falls below **0.95**, and it sends notifications using the SNS topic:
+
+
+### Screenshots (to be added)
+
+**Dashboard Overview:**  
+
+**Ingestion Ratio & Alarm:**  
+
+**S3 Metrics:**  
+
+**Storage Class Pie Chart:**  
+
+**Lambda & SNS Metrics:**  
+
 
 Enjoy!
