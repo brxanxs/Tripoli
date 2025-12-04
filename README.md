@@ -48,11 +48,12 @@ This project includes a CloudWatch dashboard that tracks:
 An alarm triggers if the ingestion success ratio drops below `0.95` and sends notifications via the SNS topic.
 
 **Screenshots (to be added):**
-- Dashboard Overview
 - Ingestion Ratio & Alarm
-- S3 Metrics
-- Storage Class Pie Chart
+<img width="1889" height="438" alt="Ingestion Ratio & Alarm" src="https://github.com/brxanxs/Tripoli/blob/d852c585c5444036acdcd3b5f717c29815f79c19/images/Lambda.png" />
+
+
 - Lambda & SNS Metrics
+<img width="1895" height="291" alt="Lambda & SNS Metrics" src="https://github.com/brxanxs/Tripoli/blob/d852c585c5444036acdcd3b5f717c29815f79c19/images/SNS.png" />
 
 > **Note:**
 > S3 storage metrics (`NumberOfObjects`, `BucketSizeBytes`) do **not** update in real time.
