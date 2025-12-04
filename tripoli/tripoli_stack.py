@@ -182,18 +182,6 @@ class TripoliStack(Stack):
 
         report_schedule.add_target(targets.LambdaFunction(report_lambda))
 
-        # api to publish the report whenever
-        report_api = apigw.LambdaRestApi(
-            self,
-            "ReporterAPI",
-            handler = report_lambda,
-            proxy = True
-        )
-        CfnOutput(self, "APIReportURLEndpoint", value=report_api.url)
-
-
-
-
         ingestion_lambda_name = LambdaPresignURL.function_name
         report_lambda_name = report_lambda.function_name
         raw_bucket_name = logBucketMap[DATACENTERS[0]]
